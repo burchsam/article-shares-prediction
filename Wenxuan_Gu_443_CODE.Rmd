@@ -1,0 +1,257 @@
+---
+title: "Model code"
+output: pdf_document
+date: "2023-12-06"
+---
+
+## Base Model
+```{r,echo=FALSE}
+### preprocessing and hyperparamter tuning
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+data <- read.csv("OnlineNewsPopularity.csv")
+library(xgboost)
+newdat= subset(data,data$data_channel_is_world==1) 
+newdat = subset(newdat, newdat$rate_positive_words!=0&newdat$rate_negative_words!=0) 
+newdat = newdat[,-c(1,2,14:18)] 
+newdat[,c(1:11,13:24,33)] = scale(newdat[,c(1:11,13:24,33)]) 
+newdat[,c(1:11,13:24,33)] = pnorm(scale(newdat[,c(1:11,13:24,33)]))
+df_final <- newdat
+df_final <- df_final[-c(7,8,9,10,11,12,13,16,17,18,19,25,26,27,28,29,30,31,32,42)]
+set.seed(201)
+target_column <- 'shares'
+indexes <- sample(1:nrow(df_final), size = 0.8 * nrow(df_final))
+train_data <- df_final[indexes, ]
+test_data <- df_final[-indexes, ]
+train_x <- as.matrix(train_data[, -which(names(train_data) == target_column)])
+train_y <- train_data[[target_column]]
+test_x <- as.matrix(test_data[, -which(names(test_data) == target_column)])
+test_y <- test_data[[target_column]]
+dtrain <- xgb.DMatrix(data = train_x, label = train_y)
+dtest <- xgb.DMatrix(data = test_x, label = test_y)
+params <- list(
+  booster = "gbtree",
+  objective = "reg:squarederror",
+  eta = 0.3,
+  gamma = 1,
+  max_depth = 10,
+  min_child_weight = 1,
+  subsample = 1,
+  colsample_bytree = 1
+)
+nrounds <- 150
+nfold <- 10
+cv_results <- xgb.cv(
+  params = params,
+  data = dtrain,
+  nrounds = nrounds,
+  nfold = nfold,
+  metrics = "rmse",
+  early_stopping_rounds = 10,
+  verbose = TRUE
+)
+print(cv_results)
+### run model
+model <- xgb.train(params = params, data = dtrain, nrounds = nrounds)
+### calculate MSE and RMSE
+predictions <- predict(model, dtest)
+mse <- mean((test_y - predictions)^2)
+print(paste("MSE:", mse))
+print(paste("RMSE:",sqrt(mse)))
+### select test set and compare
+selectedrows_x <- test_x[1:20, , drop = FALSE]
+selectedrows_y <- test_y[1:20]
+dselected <- xgb.DMatrix(selected_rows_x)
+predicted_values <- predict(model, newdata = selectedrows_x)
+comparison <- data.frame(Original_Predicted = predicted_values, Original_Actual = selectedrows_y)
+print(comparison)
+```
+
+## Ensemble Model
+```{r,echo=FALSE}
+### preprocessing and hyperparameter tuning
+library(randomForest)
+library(dplyr)
+library(tidyr)
+library(xgboost)
+library(gbm)  
+data <- read.csv("OnlineNewsPopularity.csv")
+library(xgboost)
+newdat= subset(data,data$data_channel_is_world==1) 
+newdat = subset(newdat, newdat$rate_positive_words!=0&newdat$rate_negative_words!=0) 
+newdat = newdat[,-c(1,2,14:18)] 
+newdat[,c(1:11,13:24,33)] = scale(newdat[,c(1:11,13:24,33)]) 
+newdat[,c(1:11,13:24,33)] = pnorm(scale(newdat[,c(1:11,13:24,33)]))
+df_final <- newdat
+df_final <- df_final[-c(7,8,9,10,11,12,13,16,17,18,19,25,26,27,28,29,30,31,32,42)]
+set.seed(201)
+target_column <- 'shares'
+indexes <- sample(1:nrow(df_final), size = 0.8 * nrow(df_final))
+train_data <- df_final[indexes, ]
+test_data <- df_final[-indexes, ]
+train_x <- as.matrix(train_data[, -which(names(train_data) == target_column)])
+train_y <- train_data[[target_column]]
+test_x <- as.matrix(test_data[, -which(names(test_data) == target_column)])
+test_y <- test_data[[target_column]]
+dtrain <- xgb.DMatrix(data = train_x, label = train_y)
+dtest <- xgb.DMatrix(data = test_x, label = test_y)
+params <- list(
+  booster = "gbtree",
+  objective = "reg:squarederror",
+  eta = 0.3,
+  gamma = 1,
+  max_depth = 10,
+  min_child_weight = 1,
+  subsample = 1,
+  colsample_bytree = 1
+)
+nrounds <- 150
+### XGB train
+model_xgb <- xgb.train(params = params, data = dtrain, nrounds = nrounds)
+### GBM train
+model_gbm <- gbm(formula = shares ~ ., data = train_data, distribution = "gaussian", n.trees = 50, interaction.depth = 10)
+### RF train
+model_rf <- randomForest(shares ~ ., data = train_data, ntree = 100)
+### prediction
+predictions_xgb <- predict(model_xgb, dtest)
+predictions_gbm <- predict(model_gbm, newdata = test_data, n.trees = nrounds)
+predictions_rf <- predict(model_rf, newdata = test_data)
+### calculate MSE
+mse_rf <- mean((test_y - predictions_rf)^2)
+mse_gbm <- mean((test_y - predictions_gbm)^2)
+predictions_ensemble <- (predictions_xgb + predictions_gbm + predictions_rf) / 3
+### Ensemble MSE
+mse_ensemble <- mean((test_y - predictions_ensemble)^2)
+### Choose test set
+selected_rows_x <- test_x[1:20, , drop = FALSE]
+selected_rows_y <- test_y[1:20]
+dselected <- xgb.DMatrix(selected_rows_x)
+### check the performance of data
+predicted_values_ensemble <- (predict(model_xgb, dselected) + predict(model_gbm, newdata = test_data[1:20, ], n.trees = nrounds)) / 2
+comparison <- data.frame(Original_Predicted = predicted_values_ensemble, Original_Actual = selected_rows_y)
+ratio <- predicted_values_ensemble / test_y
+large_diff_index <- which(ratio > 2 | ratio < 0.5)
+large_diff_samples_details <- test_data[large_diff_index, ]
+large_diff_samples_details$Actual <- test_y[large_diff_index]
+large_diff_samples_details$Predicted <- predicted_values_ensemble[large_diff_index]
+### calculate importance
+importance_rf <- randomForest::importance(model_rf)
+importance_gbm <- summary(model_gbm)
+importance_xgb <- xgboost::xgb.importance(feature_names = colnames(train_x), model = model_xgb)
+print(importance_rf)
+print(importance_gbm)
+print(importance_xgb)
+### processing importance and select top 5
+feature_importances <- data.frame(
+  Feature = rownames(importance_rf),
+  Importance_RF = importance_rf[,1],
+  Importance_GBM = importance_gbm[,2],
+  Importance_XGB = importance_xgb[,2]
+)
+feature_importances$Importance_RF <- feature_importances$Importance_RF / max(feature_importances$Importance_RF)
+feature_importances$Importance_GBM <- feature_importances$Importance_GBM / max(feature_importances$Importance_GBM)
+feature_importances$Gain <- feature_importances$Gain / max(feature_importances$Gain)
+feature_importances$Mean_Importance <- rowMeans(feature_importances[, -1], na.rm = TRUE)
+top_features <- head(feature_importances[order(-feature_importances$Mean_Importance), ], 5)
+print(feature_importances[order(-feature_importances$Mean_Importance), ])
+```
+
+## Neural Network
+```{r,echo=FALSE}
+### preprocessing and hyperparameter tuning
+library(keras)
+library(randomForest)
+library(dplyr)
+library(tidyr)
+library(xgboost)
+library(gbm)  
+data <- read.csv("OnlineNewsPopularity.csv")
+library(xgboost)
+newdat= subset(data,data$data_channel_is_world==1) 
+newdat = subset(newdat, newdat$rate_positive_words!=0&newdat$rate_negative_words!=0) 
+newdat = newdat[,-c(1,2,14:18)] 
+newdat[,c(1:11,13:24,33)] = scale(newdat[,c(1:11,13:24,33)]) 
+newdat[,c(1:11,13:24,33)] = pnorm(scale(newdat[,c(1:11,13:24,33)]))
+df_final <- newdat
+df_final <- df_final[-c(7,8,9,10,11,12,13,16,17,18,19,25,26,27,28,29,30,31,32,42)]
+set.seed(201)
+target_column <- 'shares'
+indexes <- sample(1:nrow(df_final), size = 0.8 * nrow(df_final))
+train_data <- df_final[indexes, ]
+test_data <- df_final[-indexes, ]
+train_x <- as.matrix(train_data[, -which(names(train_data) == target_column)])
+train_y <- train_data[[target_column]]
+test_x <- as.matrix(test_data[, -which(names(test_data) == target_column)])
+test_y <- test_data[[target_column]]
+dtrain <- xgb.DMatrix(data = train_x, label = train_y)
+dtest <- xgb.DMatrix(data = test_x, label = test_y)
+params <- list(
+  booster = "gbtree",
+  objective = "reg:squarederror",
+  eta = 0.3,
+  gamma = 1,
+  max_depth = 10,
+  min_child_weight = 1,
+  subsample = 1,
+  colsample_bytree = 1
+)
+nrounds <- 150
+### XGB train
+model_xgb <- xgb.train(params = params, data = dtrain, nrounds = nrounds)
+### GBM train
+model_gbm <- gbm(formula = shares ~ ., data = train_data, distribution = "gaussian", n.trees = 50, interaction.depth = 10)
+### RF train
+model_rf <- randomForest(shares ~ ., data = train_data, ntree = 100)
+predictions_xgb <- predict(model_xgb, dtest)
+predictions_gbm <- predict(model_gbm, newdata = test_data, n.trees = nrounds)
+predictions_rf <- predict(model_rf, newdata = test_data)
+### check mse
+mse_rf <- mean((test_y - predictions_rf)^2)
+print(paste("MSE (Random Forest):", mse_rf))
+mse_gbm <- mean((test_y - predictions_gbm)^2)
+print(paste("MSE (gbm):", mse_gbm))
+predictions_ensemble <- (predictions_xgb + predictions_gbm + predictions_rf) / 3
+mse_ensemble <- mean((test_y - predictions_ensemble)^2)
+print(paste("MSE (Ensemble):", mse_ensemble))
+print(paste("RMSE (Ensemble):", sqrt(mse_ensemble)))
+### SELECT test set and seee performence
+selected_rows_x <- test_x[1:20, , drop = FALSE]
+selected_rows_y <- test_y[1:20]
+dselected <- xgb.DMatrix(selected_rows_x)
+predicted_values_ensemble <- (predict(model_xgb, dselected) + predict(model_gbm, newdata = test_data[1:20, ], n.trees = nrounds)) / 2
+comparison <- data.frame(Original_Predicted = predicted_values_ensemble, Original_Actual = selected_rows_y)
+print(comparison)
+ratio <- predicted_values_ensemble / test_y
+large_diff_index <- which(ratio > 2 | ratio < 0.5)
+large_diff_samples_details <- test_data[large_diff_index, ]
+large_diff_samples_details$Actual <- test_y[large_diff_index]
+large_diff_samples_details$Predicted <- predicted_values_ensemble[large_diff_index]
+print(large_diff_samples_details)
+predictions_train_xgb <- predict(model_xgb, dtrain)
+predictions_train_gbm <- predict(model_gbm, newdata = train_data, n.trees = nrounds)
+predictions_train_rf <- predict(model_rf, newdata = train_data)
+### make dataset for nueral network
+nn_train_data <- data.frame(predictions_train_xgb, predictions_train_gbm, predictions_train_rf, train_y)
+### use keras to construct simple nn model, relu applied(sigmoid will be better)
+model <- keras_model_sequential() %>%
+  layer_dense(units = 32, activation = 'relu', input_shape = c(3)) %>%
+  layer_dense(units = 1)
+
+model %>% compile(
+  loss = 'mean_squared_error',
+  optimizer = optimizer_rmsprop()
+)
+history <- model %>% fit(
+  as.matrix(nn_train_data[,1:3]), 
+  nn_train_data[,4],
+  epochs = 10,
+  batch_size = 10
+)
+### test the neural network
+nn_test_data <- data.frame(predictions_xgb, predictions_gbm, predictions_rf)
+predictions_nn <- model %>% predict(as.matrix(nn_test_data))
+### calculate MSE
+mse_nn <- mean((test_y - predictions_nn)^2)
+print(paste("MSE (Neural Network Ensemble):", mse_nn))
+```

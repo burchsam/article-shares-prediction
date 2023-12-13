@@ -1,0 +1,50 @@
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+data <- read.csv("OnlineNewsPopularity.csv")
+```
+
+```{r}
+world_news <- data %>% filter(data_channel_is_world == 1)
+av_day <- world_news %>%
+  gather(key = "weekday", value = "value", 
+         weekday_is_monday, weekday_is_tuesday, weekday_is_wednesday, 
+         weekday_is_thursday, weekday_is_friday, weekday_is_saturday, 
+         weekday_is_sunday) %>%
+  filter(value == 1) %>%
+mutate(weekday = factor(weekday, levels = c("weekday_is_monday","weekday_is_tuesday","weekday_is_wednesday", "weekday_is_thursday", "weekday_is_friday", "weekday_is_saturday", "weekday_is_sunday"))) %>%
+  group_by(weekday) %>%
+  summarize(average_shares = mean(shares), total_shares = sum(shares))
+
+print(av_day)
+```
+
+
+```{r}
+week_level <- c("weekday_is_monday", "weekday_is_tuesday", "weekday_is_wednesday",
+                      "weekday_is_thursday", "weekday_is_friday", "weekday_is_saturday", 
+                      "weekday_is_sunday")
+
+av_day$weekday <- factor(av_day$weekday, levels = week_level)
+
+
+ggplot(av_day, aes(x = weekday, y = average_shares)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = round(average_shares, 1)), vjust = -0.4, size = 4) + 
+  ylim(0, max(av_day$average_shares) * 1.3) + 
+  theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle = 45, hjust = 1,size = 10, face = "bold"),axis.text.y = element_text(face = "bold"),
+  panel.background = element_rect(fill = "white", 
+  colour = "white"),plot.margin = margin(1, 1, 1, 1, "cm")) +  
+  labs(title = "Average Shares by Weekday", x = "Weekday", y = "Average Shares")
+```
+
+
+```{r}
+model <- lm(shares ~ weekday_is_monday + weekday_is_tuesday + weekday_is_wednesday + 
+            weekday_is_thursday + weekday_is_friday + weekday_is_saturday + 
+            weekday_is_sunday, data = world_news)
+
+summary(model)
+```
+
